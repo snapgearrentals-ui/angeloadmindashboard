@@ -486,7 +486,7 @@ body:not(.v-fin) .hchips{display:none!important}
 <path id="mMouth" d="M60 96 Q70 105 80 96" fill="none" stroke="#1f1b3a" stroke-width="2.6" stroke-linecap="round"/>
 <path class="sweat" d="M108 58 Q113 68 108 72 Q103 68 108 58Z" fill="#7dd3fc"/>
 </g></svg></button></div>
-<div class="foot"><button id="bx">Export backup</button><button id="bi">Import backup</button><input type="file" id="lgf" accept="image/*" hidden><span class="ver">build v7 · finance sync fix</span><input type="file" id="bf" accept="application/json" hidden></div>
+<div class="foot"><button id="bx">Export backup</button><button id="bi">Import backup</button><input type="file" id="lgf" accept="image/*" hidden><span class="ver">build v8 · google connect fix</span><input type="file" id="bf" accept="application/json" hidden></div>
 <script>
 // Paste your Google OAuth Client ID here to turn on Google Calendar (see README.md)
 const GOOGLE_CLIENT_ID="958189579808-d6add3bqce5pq68hnejnpa623dmq7ep7.apps.googleusercontent.com";
@@ -815,20 +815,41 @@ function renderCal(){
   if(rs<=now&&now<re){const nx=evs.filter(e=>e.e>now).sort((x,y)=>x.s-y.s)[0];if(nx){N.hidden=false;N.textContent="Next: "+nx.t+" · "+nx.s.toLocaleDateString([],{weekday:"short"})+" "+tm(nx.s)}else N.hidden=true}
 }
 let tok=null,tc=null,needConn=true;
+let gTries=0;
+const iosApp=()=>(navigator.standalone===true)||(/iPhone|iPad|iPod/.test(navigator.userAgent)&&matchMedia("(display-mode: standalone)").matches);
+function gFail(m){tok=null;calOk=false;calLoading=false;needConn=true;calErr=m;$("#liveT").textContent="Calendar not connected";renderCal()}
 function initGoogle(){
-  if(!GOOGLE_CLIENT_ID){needConn=false;calErr="Calendar isn\u2019t set up yet. Add your Google Client ID in index.html (see README.md).";renderCal();return}
-  if(!(window.google&&google.accounts&&google.accounts.oauth2)){setTimeout(initGoogle,400);return}
-  tc=google.accounts.oauth2.initTokenClient({client_id:GOOGLE_CLIENT_ID,scope:"https://www.googleapis.com/auth/calendar.events",callback:r=>{if(r&&r.access_token){tok=r.access_token;needConn=false;try{localStorage.setItem("mp_gcal","1")}catch(e){}fetchCal()}else{needConn=true;calErr="Google sign-in was cancelled.";renderCal()}}});
+  if(!GOOGLE_CLIENT_ID){needConn=false;calErr="Calendar isn’t set up yet. Add your Google Client ID in index.html (see README.md).";renderCal();return}
+  if(!(window.google&&google.accounts&&google.accounts.oauth2)){
+    /* Google's sign-in script never loaded (ad blocker, Brave shields, private DNS, or offline) */
+    if(++gTries>25){needConn=false;calErr="Google sign-in couldn’t load. Turn off your ad blocker / Brave Shields for this site (or check your internet), then reload the page.";renderCal()}
+    setTimeout(initGoogle,400);return}
+  gTries=0;
+  tc=google.accounts.oauth2.initTokenClient({client_id:GOOGLE_CLIENT_ID,scope:"https://www.googleapis.com/auth/calendar.events",
+    callback:r=>{
+      if(r&&r.access_token){tok=r.access_token;needConn=false;calErr=null;calLoading=true;renderCal();try{localStorage.setItem("mp_gcal","1")}catch(e){}fetchCal();return}
+      const e=(r&&r.error)||"";
+      gFail(e==="access_denied"?"Google said no access. If you see “Access blocked” or “app not verified”, add your Gmail as a Test user in Google Cloud → OAuth consent screen.":
+        e==="invalid_scope"||e==="insufficient_scope"?"Please tick the Google Calendar checkbox when Google asks for permission, then connect again.":
+        "Google sign-in didn’t finish"+(e?" ("+e+")":"")+". Tap Connect to try again.")},
+    error_callback:err=>{
+      const t=err&&err.type;
+      if(t==="popup_failed_to_open")gFail(iosApp()?"Google sign-in can’t open inside the home-screen app on iPhone. Open the site in Safari, connect there, then come back.":"Your browser blocked the Google pop-up. Allow pop-ups for this site, then tap Connect.");
+      else if(t==="popup_closed")gFail("The Google window was closed before finishing. Tap Connect to try again.");
+      else gFail("Couldn’t reach Google"+(t?" ("+t+")":"")+". Tap Connect to try again.");
+    }});
   needConn=true;calErr="Connect your Google Calendar to see your availability.";armAuto();renderCal();
 }
 let armed=false;
 function armAuto(){
   let on=false;try{on=localStorage.getItem("mp_gcal")==="1"}catch(e){}
   if(!on||armed||tok||!tc)return;armed=true;calErr="Tap anywhere on the page and your calendar reconnects by itself.";
-  const go=()=>{armed=false;if(!tok)connectGoogle()};
-  addEventListener("pointerdown",go,{once:true});addEventListener("keydown",go,{once:true});
+  /* "click" (not pointerdown/keydown): on phones only a finished tap lets a site open Google's pop-up, otherwise it is blocked silently */
+  const go=e=>{if(document.body.classList.contains("locked")||(e.target&&e.target.closest&&e.target.closest("input,textarea,select"))){addEventListener("click",go,{once:true});return}
+    armed=false;if(!tok)connectGoogle()};
+  addEventListener("click",go,{once:true});
 }
-function connectGoogle(){if(tc)tc.requestAccessToken({prompt:""})}
+function connectGoogle(){if(!tc){initGoogle();return}armed=false;try{tc.requestAccessToken({prompt:""})}catch(e){gFail("Couldn’t open Google sign-in. Reload the page and try again.")}}
 let fid=0;
 async function fetchCal(){
   if(!tok){calLoading=false;return}
